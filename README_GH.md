@@ -137,13 +137,21 @@ spec:
 
 # make sure local ports are available (argo cd gui and app)
 ```
-Run the port forwarding
+# Run the port forwarding
 kubectl -n argocd port-forward svc/argocd-server 8088:443
 kubectl port-forward svc/rest-api-books 8080:8080
 
+# check argocd status
 kubectl -n argocd get application rest-api-books    # should show Synced / Healthy
 kubectl get pods,pvc -n default                     # postgres + rest-api-books Running, pvc Bound
-curl http://localhost:8080/api/books                # the app answers
 
+# test book rest-api app is working in kubernetes cluster 
+curl -s -X POST http://localhost:8080/api/books \
+  -H 'Content-Type: application/json' \
+  -d '{"title": "Clean Code", "subTitle": "A Handbook of Agile Software Craftsmanship", "pages": 464}' | jq
+  
+curl http://localhost:8080/api/books                
+
+# update something and commit to github and it should rede-ploy
 update e.g the Readme.MD and it should get redeployed
 ```
