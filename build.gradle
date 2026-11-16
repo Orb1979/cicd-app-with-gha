@@ -24,6 +24,8 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    // Health endpoint (/actuator/health) for Kubernetes readiness/liveness probes
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
 
     // Flyway for database migrations
     implementation("org.springframework.boot:spring-boot-starter-flyway")
@@ -78,4 +80,14 @@ configurations {
 // Run integration tests as part of 'check' (and therefore 'build').
 tasks.named('check') {
     dependsOn testing.suites.integrationTest
+}
+
+// Second immutable tag for the published image (e.g. ghcr.io/<owner>/rest-api-books:sha-abc1234),
+// supplied by CI via the IMAGE_SHA_TAG environment variable.
+// The GitOps deploy job pins the deployment to this tag, so every deployed image stays traceable to an exact commit.
+tasks.named('bootBuildImage') {
+    def shaTag = System.getenv('IMAGE_SHA_TAG')
+    if (shaTag) {
+        tags = [shaTag]
+    }
 }

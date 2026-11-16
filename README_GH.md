@@ -26,20 +26,79 @@ github repo > settings > advanced security > Dependency graph > enable
 **publish-image.yml** — runs on push to main (`latest`) and on `v*` tags (`x.y.z`)
 
 ```
-Step  Implementation
+Job publish:
 - ./gradlew check — tests must pass before anything is published
 - docker login to ghcr.io (GITHUB_TOKEN, permission packages:write)
-- Compute image ref: ghcr.io/<owner>/rest-api-books:<latest|x.y.z> (GHCR only accepts lowercase image names)
-- Gradle bootBuildImage --publishImage — Cloud Native Buildpacks image, pushed to GHCR (GitHub Packages)
+- Compute image ref: ghcr.io/<owner>/rest-api-books:<latest|x.y.z>
+  (GHCR only accepts lowercase image names)
+- Gradle bootBuildImage --publishImage — Cloud Native Buildpacks image,
+  pushed to GHCR (GitHub Packages) with an additional immutable tag
+  :sha-<commit> (read by build.gradle via the IMAGE_SHA_TAG env var)
+
+Job deploy (runs after publish):
+- Checkout the GitOps repository Orb1979/cicd-kubernetes
+  (uses the GITOPS_PAT secret — GITHUB_TOKEN cannot write to other repos)
+- yq pins k8s/app/deployment.yaml to ghcr.io/<owner>/rest-api-books:sha-<commit>
+- Commit "deploy: <image ref>" + push — the GitOps commit history is the deployment log
 ```
 
 Note: the first push creates a *private* package; flip visibility in the
-package settings if it should be pullable publicly.
+package settings if it should be pullable publicly (this repo does that,
+so the cluster needs no imagePullSecret).
 
-# todo
+# Deployment pipeline (GitOps)
+
 ```
-Tag image using Git commit SHA
-Update deployment.yaml with the new image tag
-Commit and push GitOps repository
-Argo CD deploys to local K3s (Rancher)
+git push to main
+   ↓
+GitHub Actions (publish-image.yml)
+   ↓
+tests, build image :sha-<commit>, push to GHCR
+   ↓
+deploy job updates deployment.yaml: old sha → new sha
+   ↓
+commit + push to cicd-kubernetes
+   ↓
+Argo CD notices the Git change (polls every ~3 min)
+   ↓
+Argo CD applies the change to the local K3s (Rancher Desktop)
+   ↓
+K3s pulls the new image and creates a new Pod
+   ↓
+app reachable at http://localhost:8080/api/books
+```
+
+Manual setup, done once:
+
+```
+Ceate PAT (Personal Access token)
+GitHub settings
+github.com → click your avatar (top right)
+  → Settings
+  → Developer settings (bottom of the left menu)
+  → Personal access tokens → Fine-grained tokens
+  → Generate new token
+
+Token name:	<app repo> cicd-app-with-gha deploy job
+Expiration:	90 days
+Resource owner:	<you> 
+Repository access: Only select repositories → <kubernetes repo> 'cicd-kubernetes'
+Permissions: Repository permissions → Contents	 -> change to: Read and write
+
+Part 1B - add the token valuee to your App repo setttings
+https://github.com/Orb1979/cicd-app-with-gha/settings/secrets/actions/
+new Secret > GITOPS_PAT 
+
+>>>>>>>>>>>>> continue here
+
+# 2. Argo CD in the local cluster
+kubectl create namespace argocd
+kubectl apply -n argocd -k "github.com/argoproj/argo-cd/manifests/cluster-install?ref=stable"
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
+kubectl -n argocd port-forward svc/argocd-server 8080:443
+
+# 3. In the Argo CD UI (https://localhost:8080): New Application
+#    repo: https://github.com/Orb1979/cicd-kubernetes (public -> no credentials)
+#    path: k8s, destination: in-cluster / default namespace
+#    sync policy: automated + self-heal
 ```
