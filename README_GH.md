@@ -5,7 +5,7 @@
 gh auth status
 gh auth refresh --hostname github.com --scopes workflow
 
-# enable dependency scanning
+# enable dependency scanning for this repo
 github repo > settings > advanced security > Dependency graph > enable
 ```
 
@@ -68,12 +68,10 @@ K3s pulls the new image and creates a new Pod
 app reachable at http://localhost:8080/api/books
 ```
 
-Manual setup, done once:
-
+# Manual setup Deployment pipeline (Github + repo settings)
 ```
 Ceate PAT (Personal Access token)
-GitHub settings
-github.com → click your avatar (top right)
+GitHub settings: github.com → click your avatar (top right)
   → Settings
   → Developer settings (bottom of the left menu)
   → Personal access tokens → Fine-grained tokens
@@ -85,20 +83,67 @@ Resource owner:	<you>
 Repository access: Only select repositories → <kubernetes repo> 'cicd-kubernetes'
 Permissions: Repository permissions → Contents	 -> change to: Read and write
 
-Part 1B - add the token valuee to your App repo setttings
+Add the created token value to your <App Repo> settings
 https://github.com/Orb1979/cicd-app-with-gha/settings/secrets/actions/
 new Secret > GITOPS_PAT 
+```
 
->>>>>>>>>>>>> continue here
-
-# 2. Argo CD in the local cluster
+# Run ArgoCD Locally in kubernetes (Rancher Desktop)
+```
+# 1. if needed: Install Argo CD in your cluster (Rancher desktop)
 kubectl create namespace argocd
 kubectl apply -n argocd -k "github.com/argoproj/argo-cd/manifests/cluster-install?ref=stable"
-kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
-kubectl -n argocd port-forward svc/argocd-server 8080:443
+kubectl apply -n argocd --server-side -k "github.com/argoproj/argo-cd/manifests/cluster-install?ref=stable"
 
-# 3. In the Argo CD UI (https://localhost:8080): New Application
-#    repo: https://github.com/Orb1979/cicd-kubernetes (public -> no credentials)
-#    path: k8s, destination: in-cluster / default namespace
-#    sync policy: automated + self-heal
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
+<save this paswsowrd>
+
+kubectl -n argocd port-forward svc/argocd-server 8088:443
+
+# login ArgoCD Gui 
+https://localhost:8088 
+admin / <pasw you got prev step>
+(optional: setings > user info > change password)
+
+# add recursive direcotry scan, else it would only look for yaml files in k8s/
+kubectl -n argocd patch application rest-api-books --type merge  -p '{"spec":{"source":{"directory":{"recurse":true}}}}'
+k8s/
+├── app/
+│   ├── deployment.yaml 
+│   └── service.yaml 
+└── postgres/
+    ├── deployment.yaml 
+    └── ...
+
+# 2. In the Argo CD UI create New Application (choose yaml)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rest-api-books
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Orb1979/cicd-kubernetes
+    targetRevision: HEAD
+    path: k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      selfHeal: true
+```
+
+# make sure local ports are available (argo cd gui and app)
+```
+Run the port forwarding
+kubectl -n argocd port-forward svc/argocd-server 8088:443
+kubectl port-forward svc/rest-api-books 8080:8080
+
+kubectl -n argocd get application rest-api-books    # should show Synced / Healthy
+kubectl get pods,pvc -n default                     # postgres + rest-api-books Running, pvc Bound
+curl http://localhost:8080/api/books                # the app answers
+
+update e.g the Readme.MD and it should get redeployed
 ```
